@@ -66,7 +66,7 @@ int XYVK_WINDOWMAIN {
         renderer.BindAndDraw(vertexBuffer, 6, 1, 0, 0);
     }));
     
-    std::thread mythread([&])[] {
+    std::thread mythread([&]() {
         while (window.ShouldExecute()) {
             renderGraph.RenderSwapChain();
 
