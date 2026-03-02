@@ -28,7 +28,9 @@ Here are the following default options for VULKAN / VMA / GLFW / GLM:
 
 
 ### SAMPLE PROGRAM
-A simple sample program is provided which does the following: load QOI image -> stage render data to GPU -> copy QOI image A to image B -> copy image B to screen image (swapchain iamge) and output to screen. Thsi requires the following valid sub-folders, compiled shaders and a sample QOI image of any sort:
+A simple sample program is provided which does the following: load QOI image -> stage render data to GPU -> copy QOI image A to image B -> copy image B to screen image (swapchain iamge) and output to screen.
+
+This requires the following valid sub-folders, compiled shaders and a sample QOI image of any sort. If compiling shaders with `_SHADERS.bat` the shaders will be compiled in these locations by default. No default QOI image is provided (one can be exported by the program Aseprite):
 ```
 #define SHADER_PATH_VERTEX "./Shaders/default_output_vert.spv"
 #define SHADER_PATH_FRAGMENT "./Shaders/default_output_frag.spv"
