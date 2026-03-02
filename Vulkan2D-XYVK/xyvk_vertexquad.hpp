@@ -75,8 +75,8 @@
             glm::vec2 origin, position, extent;
             glm::float32 depth, rotation;
             glm::vec4 uv;
-
-            xyvk_vertexquad(glm::vec2 extent, glm::float32 depth, glm::vec2 xy, glm::vec2 origin, glm::vec2 position, glm::float32 rotation, glm::vec4 uv)
+            
+            xyvk_vertexquad(glm::vec2 extent, glm::float32 depth = 1.0, glm::vec2 xy = glm::vec2(0.0), glm::vec2 origin = glm::vec2(0.0), glm::vec2 position = glm::vec2(0.0), glm::float32 rotation = glm::float32(0.0), glm::vec4 uv = glm::vec4(0.0, 0.0, 1.0, 1.0))
             : origin(origin), position(position), extent(extent), depth(depth), rotation(rotation), uv(uv) { Vertices(); }
             
             xyvk_vertexquad& Scale(glm::vec2 scalar) { extent *= scalar; return (*this); }

@@ -60,10 +60,11 @@
 				return std::pair<VkCommandBuffer,int32_t>(VK_NULL_HANDLE,-1);
 			}
 
-			VkResult Return(std::pair<VkCommandBuffer, int32_t> bufferIndexPair) {
+			VkResult Return(std::pair<VkCommandBuffer, int32_t>& bufferIndexPair) {
 				if (bufferIndexPair.second < 0 || bufferIndexPair .second >= commandBuffers.size())
 					return VK_ERROR_NOT_PERMITTED_KHR;
 				commandBuffers[bufferIndexPair.second].second = false;
+				bufferIndexPair = std::pair<VkCommandBuffer, int32_t>(VK_NULL_HANDLE, -1);
 				return VK_SUCCESS;
 			}
 

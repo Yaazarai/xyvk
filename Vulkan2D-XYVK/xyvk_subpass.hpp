@@ -252,95 +252,70 @@
 				std::pair<VkCommandBuffer, int32_t> bufferIndexPair = cmdpool.Lease(false);
 				VkCommandBufferBeginInfo beginInfo { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT };
 				VkResult result = vkBeginCommandBuffer(bufferIndexPair.first, &beginInfo);
-				
-				if (result != VK_SUCCESS) {
-					cmdpool.Return(bufferIndexPair);
-					return std::pair(VK_NULL_HANDLE, -1);
-				}
-				
-				#if XYVK_VALIDATION
-					vkCmdResetQueryPool(bufferIndexPair.first, timestampQueryPool, timestampIterator, 2);
-					vkCmdWriteTimestamp(bufferIndexPair.first, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampQueryPool, timestampIterator);
-					timestampIterator ++;
-				#endif
-				
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				if (subpassType == XYVK_SUBPASSTYPE::FRAGMENT || subpassType == XYVK_SUBPASSTYPE::PRESENT) {
-					targetImage->TransitionLayoutBarrier(bufferIndexPair.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP, XYVK_IMAGELAYOUT::COLOR_ATTACHMENT);
 
-					VkViewport dynamicViewportKHR { .x = 0, .y = 0, .minDepth = 0.0f, .maxDepth = 1.0f, .width = static_cast<float>(targetImage->width), .height = static_cast<float>(targetImage->height) };
-					VkRect2D renderAreaKHR = { .offset = { .x = 0, .y = 0 } , .extent = { .width = static_cast<uint32_t>(targetImage->width), .height = static_cast<uint32_t>(targetImage->height) } };
-					vkCmdSetViewportWithCountEXTXYVK(bufferIndexPair.first, 1, &dynamicViewportKHR);
-					vkCmdSetScissorWithCountEXTXYVK(bufferIndexPair.first, 1, &renderAreaKHR);
+				if (result == VK_SUCCESS) {
+					#if XYVK_VALIDATION
+						vkCmdResetQueryPool(bufferIndexPair.first, timestampQueryPool, timestampIterator, 2);
+						vkCmdWriteTimestamp(bufferIndexPair.first, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampQueryPool, timestampIterator);
+						timestampIterator ++;
+					#endif
+					
+					if (subpassType == XYVK_SUBPASSTYPE::FRAGMENT || subpassType == XYVK_SUBPASSTYPE::PRESENT) {
+						targetImage->TransitionLayoutBarrier(bufferIndexPair.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP, XYVK_IMAGELAYOUT::COLOR_ATTACHMENT);
 
-					VkRenderingAttachmentInfoKHR colorAttachmentInfo { .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-						.clearValue = dynamicState.clearColor, .loadOp = ((dynamicState.clearOnLoad)?VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE), .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-						.imageView = targetImage->imageView, .imageLayout = (VkImageLayout) targetImage->imageLayout
-					};
-					VkRenderingInfoKHR dynamicRenderInfo { .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachmentInfo, .renderArea = renderAreaKHR, .layerCount = 1 };
-					vkCmdBeginRenderingKHRXYVK(bufferIndexPair.first, &dynamicRenderInfo);
+						VkViewport dynamicViewportKHR { .x = 0, .y = 0, .minDepth = 0.0f, .maxDepth = 1.0f, .width = static_cast<float>(targetImage->width), .height = static_cast<float>(targetImage->height) };
+						VkRect2D renderAreaKHR = { .offset = { .x = 0, .y = 0 } , .extent = { .width = static_cast<uint32_t>(targetImage->width), .height = static_cast<uint32_t>(targetImage->height) } };
+						VkRenderingAttachmentInfoKHR colorAttachmentInfo { .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+							.clearValue = dynamicState.clearColor, .loadOp = ((dynamicState.clearOnLoad)?VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE), .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+							.imageView = targetImage->imageView, .imageLayout = (VkImageLayout) targetImage->imageLayout
+						};
+						VkRenderingInfoKHR dynamicRenderInfo { .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR, .colorAttachmentCount = 1, .pColorAttachments = &colorAttachmentInfo, .renderArea = renderAreaKHR, .layerCount = 1 };
+						VkColorBlendEquationEXT defaultBlending = {
+							.colorBlendOp = VK_BLEND_OP_ADD, .srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA, .dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+							.alphaBlendOp = VK_BLEND_OP_ADD, .srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE, .dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+						};
+						VkColorComponentFlags colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+						VkBool32 colorWrites = VK_TRUE;
+						VkBool32 defaultBoolFlag = VK_FALSE;
+						VkSampleMask sampleMasks = VK_SAMPLE_COUNT_1_BIT;
 
-					vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
-
-					// COLOR DYNAMIC STATE:
-					VkBool32 colorWrites = VK_TRUE;
-					VkColorBlendEquationEXT defaultBlending = {
-						.colorBlendOp = VK_BLEND_OP_ADD,
-						.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA,
-						.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-						.alphaBlendOp = VK_BLEND_OP_ADD,
-						.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
-						.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
-					};
-					VkColorComponentFlags colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-					vkCmdSetColorWriteEnableEXTXYVK(bufferIndexPair.first, 1, &colorWrites);
-					vkCmdSetColorBlendEnableEXTXYVK(bufferIndexPair.first, 0, 1, &dynamicState.blending);
-					vkCmdSetColorBlendEquationEXTXYVK(bufferIndexPair.first, 0, 1, &defaultBlending);
-					vkCmdSetColorWriteMaskEXTXYVK(bufferIndexPair.first, 0, 1, &colorWriteMask);
-
-					// DEPTH / STENCIL DYNAMIC STATE:
-					VkBool32 defaultBoolFlag = VK_FALSE;
-					vkCmdSetDepthWriteEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetDepthTestEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetDepthClampEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetDepthBiasEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetStencilTestEnableEXTXYVK(bufferIndexPair.first, VK_FALSE);
-
-					// VERTEX INPUT DYNAMIC STATE:
-					vkCmdSetVertexInputEXTXYVK(bufferIndexPair.first, 1, &dynamicState.vertexDescription.binding, dynamicState.vertexDescription.attributes.size(), dynamicState.vertexDescription.attributes.data());
-					vkCmdSetPrimitiveTopologyEXTXYVK(bufferIndexPair.first, dynamicState.vertexTopology);
-
-					// RASTERIZATION DYNAMIC STATE:
-					VkSampleMask sampleMasks = VK_SAMPLE_COUNT_1_BIT;
-					vkCmdSetRasterizationSamplesEXTXYVK(bufferIndexPair.first, VK_SAMPLE_COUNT_1_BIT);
-					vkCmdSetSampleMaskEXTXYVK(bufferIndexPair.first, VK_SAMPLE_COUNT_1_BIT, &sampleMasks);
-					vkCmdSetAlphaToCoverageEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetPrimitiveRestartEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
-					vkCmdSetCullModeEXTXYVK(bufferIndexPair.first, VK_CULL_MODE_NONE);
-					vkCmdSetFrontFaceEXTXYVK(bufferIndexPair.first, VK_FRONT_FACE_CLOCKWISE);
-					vkCmdSetPolygonModeEXTXYVK(bufferIndexPair.first, VK_POLYGON_MODE_FILL);
-					vkCmdSetRasterizerDiscardEnableEXTXYVK(bufferIndexPair.first, VK_FALSE);
-				} else if (subpassType == XYVK_SUBPASSTYPE::COMPUTE) {
-					vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
-				}
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
+						vkCmdBeginRenderingKHRXYVK(bufferIndexPair.first, &dynamicRenderInfo);
+						vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
+						vkCmdSetViewportWithCountEXTXYVK(bufferIndexPair.first, 1, &dynamicViewportKHR);
+						vkCmdSetScissorWithCountEXTXYVK(bufferIndexPair.first, 1, &renderAreaKHR);
+						vkCmdSetColorWriteEnableEXTXYVK(bufferIndexPair.first, 1, &colorWrites);
+						vkCmdSetColorBlendEnableEXTXYVK(bufferIndexPair.first, 0, 1, &dynamicState.blending);
+						vkCmdSetColorBlendEquationEXTXYVK(bufferIndexPair.first, 0, 1, &defaultBlending);
+						vkCmdSetColorWriteMaskEXTXYVK(bufferIndexPair.first, 0, 1, &colorWriteMask);
+						vkCmdSetDepthWriteEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetDepthTestEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetDepthClampEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetDepthBiasEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetStencilTestEnableEXTXYVK(bufferIndexPair.first, VK_FALSE);
+						vkCmdSetVertexInputEXTXYVK(bufferIndexPair.first, 1, &dynamicState.vertexDescription.binding, dynamicState.vertexDescription.attributes.size(), dynamicState.vertexDescription.attributes.data());
+						vkCmdSetPrimitiveTopologyEXTXYVK(bufferIndexPair.first, dynamicState.vertexTopology);
+						vkCmdSetRasterizationSamplesEXTXYVK(bufferIndexPair.first, VK_SAMPLE_COUNT_1_BIT);
+						vkCmdSetSampleMaskEXTXYVK(bufferIndexPair.first, VK_SAMPLE_COUNT_1_BIT, &sampleMasks);
+						vkCmdSetAlphaToCoverageEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetPrimitiveRestartEnableEXTXYVK(bufferIndexPair.first, defaultBoolFlag);
+						vkCmdSetCullModeEXTXYVK(bufferIndexPair.first, VK_CULL_MODE_NONE);
+						vkCmdSetFrontFaceEXTXYVK(bufferIndexPair.first, VK_FRONT_FACE_CLOCKWISE);
+						vkCmdSetPolygonModeEXTXYVK(bufferIndexPair.first, VK_POLYGON_MODE_FILL);
+						vkCmdSetRasterizerDiscardEnableEXTXYVK(bufferIndexPair.first, VK_FALSE);
+					} else if (subpassType == XYVK_SUBPASSTYPE::COMPUTE) {
+						vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
+					}
+				} else { cmdpool.Return(bufferIndexPair); }
 				return bufferIndexPair;
 			}
 
 			void EndCmdBuffer(std::pair<VkCommandBuffer,int32_t> bufferIndexPair) {
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 				if (subpassType == XYVK_SUBPASSTYPE::FRAGMENT || subpassType == XYVK_SUBPASSTYPE::PRESENT) {
 					vkCmdEndRenderingKHRXYVK(bufferIndexPair.first);
 					targetImage->TransitionLayoutBarrier(bufferIndexPair.first, XYVK_CMDBUFFERSTAGE::PIPE_BOT,
 						(targetImage->sourceType == XYVK_IMAGETYPE::SWAPCHAIN)?
 							XYVK_IMAGELAYOUT::PRESENT_SRCKHR : XYVK_IMAGELAYOUT::SHADER_READONLY);
 				}
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-				////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 				#if XYVK_VALIDATION
 					vkCmdWriteTimestamp(bufferIndexPair.first, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampQueryPool, timestampIterator);

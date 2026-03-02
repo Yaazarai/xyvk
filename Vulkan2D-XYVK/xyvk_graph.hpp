@@ -23,7 +23,7 @@
 			std::vector<xyvk_image*> resizableImages;
 
 			std::atomic_int64_t frameCounter, renderPassCounter;
-			std::atomic_bool presentable, refreshable, frameResized;
+			std::atomic_bool framePresentable, frameRefreshed, frameResized;
 			std::vector<xyvk_subpass*> renderPasses;
 			VkResult initialized = VK_ERROR_INITIALIZATION_FAILED;
 			
@@ -34,11 +34,8 @@
 			void Disposable(bool waitIdle) {
 				if (waitIdle) vkdevice.WaitIdle();
 
-				for(xyvk_image* swapImage : swapChainImages) {
-					vkDestroyImageView(vkdevice.logicalDevice, swapImage->imageView, VK_NULL_HANDLE);
-					delete swapImage;
-				}
-				
+				for(xyvk_image* swapImage : swapChainImages) vkDestroyImageView(vkdevice.logicalDevice, swapImage->imageView, VK_NULL_HANDLE);
+				for(xyvk_image* swapImage : swapChainImages) delete swapImage;
 				for(xyvk_subpass* pass : renderPasses) delete pass;
 
 				if (swapChain != VK_NULL_HANDLE) vkDestroySwapchainKHR(vkdevice.logicalDevice, swapChain, VK_NULL_HANDLE);
@@ -48,7 +45,7 @@
 				if (swapImageTimeline != VK_NULL_HANDLE) vkDestroySemaphore(vkdevice.logicalDevice, swapImageTimeline, VK_NULL_HANDLE);
 			}
 
-			xyvk_graph(xyvk_device& vkdevice, xyvk_window* window, xyvk_surfaceinfo swapChainPresentDetails = xyvk_surfaceinfo()) : vkdevice(vkdevice), window(window), swapChainPresentDetails(swapChainPresentDetails), presentable(true), refreshable(false), frameResized(false), swapChain(VK_NULL_HANDLE), renderPassCounter(0), frameCounter(0), swapFrameIndex(0) {
+			xyvk_graph(xyvk_device& vkdevice, xyvk_window* window, xyvk_surfaceinfo swapChainPresentDetails = xyvk_surfaceinfo()) : vkdevice(vkdevice), window(window), swapChainPresentDetails(swapChainPresentDetails), framePresentable(true), frameRefreshed(false), frameResized(false), swapChain(VK_NULL_HANDLE), renderPassCounter(0), frameCounter(0), swapFrameIndex(0) {
 				onDispose.hook(xyvk_callback<bool>([this](bool forceDispose) {this->Disposable(forceDispose); }));
 				initialized = Initialize();
 			}
@@ -101,28 +98,24 @@
 				xyvk_swapchain::CreateSwapChainImageViews(vkdevice, swapChainPresentDetails, swapChainImages);
 				vkDestroySwapchainKHR(vkdevice.logicalDevice, oldSwapChain, VK_NULL_HANDLE);
 
-				presentable = true;
-				refreshable = false;
+				framePresentable = true;
+				frameRefreshed = false;
 				frameResized = true;
 			}
 			
 			VkResult ExecuteRenderGraph() {
-				for(xyvk_subpass* pass : renderPasses) {
+				for(xyvk_subpass* pass : renderPasses)
 					pass->cmdpool.ReturnAll();
-					pass->timestampIterator = 0;
-				}
-
-				VkResult result = VK_SUCCESS;
+				
 				for(int32_t i = 0; i < renderPasses.size(); i++) {
 					if (renderPasses[i]->subpassType == XYVK_SUBPASSTYPE::PRESENT)
 						renderPasses[i]->targetImage = swapChainImages[swapFrameIndex];
 
-					////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+					renderPasses[i]->timestampIterator = 0;
 					std::pair<VkCommandBuffer, int32_t> cmdbufferPair = renderPasses[i]->BeginCmdBuffer();
 					xyvk_renderobject executionObject(renderPasses[i]->pipelineLayout, renderPasses[i]->subpassType, cmdbufferPair);
 					renderPasses[i]->renderEvent.invoke(*renderPasses[i], executionObject, static_cast<bool>(frameResized));
 					renderPasses[i]->EndCmdBuffer(cmdbufferPair);
-					////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 					
 					VkDeviceSize frameWait = frameCounter * 100;
 					VkDeviceSize waitValue = frameWait + renderPasses[i]->timelineWait;
@@ -138,40 +131,38 @@
 					VkSubmitInfo submitInfo { .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO, .commandBufferCount = 1U, .pCommandBuffers = &cmdbufferPair.first,
 						.pWaitDstStageMask = waitStages, .waitSemaphoreCount = static_cast<uint32_t>(isInitialPass), .pWaitSemaphores = (isInitialPass)? initialWaits : dependencyWaits, .pNext = &timelineInfo };
 					
+					VkResult result = VK_SUCCESS;
 					if (renderPasses[i]->subpassType == XYVK_SUBPASSTYPE::PRESENT) {
 						VkSemaphore signalSemaphores[] = { swapImageFinished };
 						submitInfo.signalSemaphoreCount = 1;
 						submitInfo.pSignalSemaphores = signalSemaphores;
 						result = vkQueueSubmit(swapChainPresentQueue, 1, &submitInfo, swapImageInFlight);
-					} else {
-						result = vkQueueSubmit(renderPasses[i]->submitQueue, 1, &submitInfo, VK_NULL_HANDLE);
-					}
+					} else { result = vkQueueSubmit(renderPasses[i]->submitQueue, 1, &submitInfo, VK_NULL_HANDLE); }
+
+					if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) break;
 				}
 
-				return result;
+				return VK_SUCCESS;
 			}
 
 			VkResult RenderSwapChain() {
-				VkResult result = VK_NOT_READY;
-				if (!presentable || refreshable) {
+				if (!framePresentable || frameRefreshed)
 					ResizeFrameBuffer(window->hwndWindow, window->hwndWidth, window->hwndHeight);
-				} else {
-					// Double wait to avoid synch-overlap causing command buffers to still be in use from last present...
-					xyvk_swapchain::WaitResetFences(vkdevice, &swapImageInFlight);
-					VkResult result = xyvk_swapchain::QueryNextSwapChainImage(vkdevice, swapChain, swapFrameIndex, swapImageInFlight, swapImageAvailable);
-					xyvk_swapchain::WaitResetFences(vkdevice, &swapImageInFlight);
-					
-					if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
-						result = ExecuteRenderGraph();
-					
-					if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
-						result = xyvk_swapchain::QueuePresent(swapChainPresentQueue, swapChain, swapImageFinished, swapFrameIndex);
-					
-					presentable = (result == VK_SUCCESS);
-					frameResized = false;
-					frameCounter ++;
-				}
 
+				// Double wait to avoid synch-overlap causing command buffers to still be in use from last present...
+				xyvk_swapchain::WaitResetFences(vkdevice, &swapImageInFlight);
+				VkResult result = xyvk_swapchain::QueryNextSwapChainImage(vkdevice, swapChain, swapFrameIndex, swapImageInFlight, swapImageAvailable);
+				xyvk_swapchain::WaitResetFences(vkdevice, &swapImageInFlight);
+				
+				if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
+					result = ExecuteRenderGraph();
+				
+				if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR)
+					result = xyvk_swapchain::QueuePresent(swapChainPresentQueue, swapChain, swapImageFinished, swapFrameIndex);
+				
+				framePresentable = (result == VK_SUCCESS);
+				frameResized = false;
+				frameCounter ++;
 				return result;
 			}
 			
@@ -183,14 +174,12 @@
 					xyvk_swapchain::CreateSwapChainImages(vkdevice, *window, swapChainPresentDetails, swapChain, swapChainImages);
 					xyvk_swapchain::CreateSwapChainImageViews(vkdevice, swapChainPresentDetails, swapChainImages);
 
-					/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 					VkSemaphoreCreateInfo semaphoreCreateInfo { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
 					VkFenceCreateInfo fenceCreateInfo { .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO, .flags = VK_FENCE_CREATE_SIGNALED_BIT };
 
 					vkCreateSemaphore(vkdevice.logicalDevice, &semaphoreCreateInfo, VK_NULL_HANDLE, &swapImageAvailable);
 					vkCreateSemaphore(vkdevice.logicalDevice, &semaphoreCreateInfo, VK_NULL_HANDLE, &swapImageFinished);
 					vkCreateFence(vkdevice.logicalDevice, &fenceCreateInfo, VK_NULL_HANDLE, &swapImageInFlight);
-					/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 					VkSemaphoreTypeCreateInfo timelineCreateInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO, .pNext = NULL, .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE, .initialValue = 0 };
 					VkSemaphoreCreateInfo createInfo = { .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, .pNext = &timelineCreateInfo, .flags = 0 };

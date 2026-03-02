@@ -18,12 +18,12 @@ int XYVK_WINDOWMAIN {
     xyvk_graph renderGraph(vkdevice, &window, xyvk_surfaceinfo());
 
     xyvk_shader vertexShader(vkdevice, XYVK_SHADERSTAGES::VERTEX, SHADER_PATH_VERTEX, { XYVK_DESCRIPTORTYPE::UNIFORM_BUFFER });
-    xyvk_shader fragmentShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_TEXTUREOUT, { XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER });
-    xyvk_shader textureShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_TEXTUREOUT, { XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER });
+    xyvk_shader fragmentShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_FRAGMENT, { });
+    xyvk_shader textureShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_TEXTUREOUT, { XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER, XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER });
     
     xyvk_subpass* transferPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::TRANSFER, {}, "Staging Data");
-    xyvk_subpass* fragmentPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::FRAGMENT, { &vertexShader, &textureShader }, "Render Scene", { transferPass });
-    xyvk_subpass* swapchainPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::PRESENT, { &vertexShader, &textureShader }, "Screen Output", { fragmentPass });
+    xyvk_subpass* fragmentPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::FRAGMENT, { &vertexShader, &fragmentShader }, "Render Scene", { transferPass });
+    xyvk_subpass* swapchainPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::PRESENT, { &vertexShader, &textureShader }, "Screen Output", { fragmentPass }, 0, xyvk_dynamicstate(VK_FALSE, VK_FALSE));
     
     xyvk_image targetImage(vkdevice, XYVK_IMAGETYPE::ATTACHEMENT, window.hwndWidth, window.hwndHeight);
     fragmentPass->SetTargetImage(&targetImage);
@@ -33,8 +33,9 @@ int XYVK_WINDOWMAIN {
     void* sourceImageData = qoi_read(DEFAULT_QOI_IMAGE, &sourceImageDesc, 4);
     xyvk_image sourceImage(vkdevice, XYVK_IMAGETYPE::ATTACHEMENT, sourceImageDesc.width, sourceImageDesc.height);
     
-    xyvk_vertexquad imageQuad(vec2(sourceImageDesc.width, sourceImageDesc.height), 1.0, vec2(0.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 0.0), 0.0, vec4(0.0, 0.0, 1.0, 1.0));
-    xyvk_vertexquad screenQuad(vec2(window.hwndWidth, window.hwndHeight), 1.0, vec2(0.0, 0.0), vec2(0.0, 0.0), vec2(0.0, 0.0), 0.0, vec4(0.0, 0.0, 1.0, 1.0));
+    xyvk_vertexquad imageQuad(vec2(sourceImageDesc.width, sourceImageDesc.height), 1.0, glm::vec2(0.0, 0.0));
+    xyvk_vertexquad screenQuad(vec2(window.hwndWidth, window.hwndHeight), 1.0, glm::vec2(0.0, 0.0));
+    imageQuad.VerticesColor(vec4(1.0, 0.0, 1.0, 1.0));
 
     size_t sizeofQuads = imageQuad.SizeofQuad() + screenQuad.SizeofQuad();
     size_t sizeOfImage = sourceImageDesc.width * sourceImageDesc.height * sourceImageDesc.channels;
@@ -56,14 +57,14 @@ int XYVK_WINDOWMAIN {
     
     fragmentPass->renderEvent.hook(xyvk_renderevent([&](xyvk_subpass& renderPass, xyvk_renderobject& renderer, bool frameResized) {
         renderer.PushBuffer(cameraBuffer);
-        renderer.PushImage(sourceImage);
         renderer.BindAndDraw(vertexBuffer, 6, 1, 0, 0);
     }));
     
     swapchainPass->renderEvent.hook(xyvk_renderevent([&](xyvk_subpass& renderPass, xyvk_renderobject& renderer, bool frameResized) {
         renderer.PushBuffer(cameraBuffer);
+        renderer.PushImage(sourceImage);
         renderer.PushImage(*renderPass.dependencies[0]->targetImage);
-        renderer.BindAndDraw(vertexBuffer, 6, 1, 0, 0);
+        renderer.BindAndDraw(vertexBuffer, 6, 1, 6, 0);
     }));
     
     std::thread mythread([&]() {
@@ -71,8 +72,8 @@ int XYVK_WINDOWMAIN {
             renderGraph.RenderSwapChain();
 
             #if XYVK_VALIDATION
-                for(xyvk_subpass* pass : renderGraph.renderPasses)
-                    pass->QueryTimeStampsOutput(renderGraph.frameCounter);
+                //for(xyvk_subpass* pass : renderGraph.renderPasses)
+                //    pass->QueryTimeStampsOutput(renderGraph.frameCounter);
             #endif
         }
     });
