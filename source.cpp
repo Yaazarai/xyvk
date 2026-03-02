@@ -72,8 +72,8 @@ int XYVK_WINDOWMAIN {
             renderGraph.RenderSwapChain();
 
             #if XYVK_VALIDATION
-                //for(xyvk_subpass* pass : renderGraph.renderPasses)
-                //    pass->QueryTimeStampsOutput(renderGraph.frameCounter);
+                for(xyvk_subpass* pass : renderGraph.renderPasses)
+                    pass->QueryTimeStampsOutput(renderGraph.frameCounter);
             #endif
         }
     });
