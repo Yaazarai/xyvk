@@ -54,7 +54,7 @@
 				xyvk_subpass* subpass = new xyvk_subpass(vkdevice, cmdpool, subpassType, shaderStages, title, renderPassCounter ++, localSubpassIndex, dynamicState);
 				
 				for(xyvk_subpass* dependency : dependencies)
-					subpass->dependencies.push_back(dependency);
+					subpass->AddDependency(dependency);
 				
 				renderPasses.push_back(subpass);
 				return subpass;

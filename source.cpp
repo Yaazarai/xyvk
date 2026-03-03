@@ -21,18 +21,19 @@ int XYVK_WINDOWMAIN {
     xyvk_shader fragmentShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_FRAGMENT, { });
     xyvk_shader textureShader(vkdevice, XYVK_SHADERSTAGES::FRAGMENT, SHADER_PATH_TEXTUREOUT, { XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER, XYVK_DESCRIPTORTYPE::IMAGE_SAMPLER });
     
-    xyvk_subpass* transferPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::TRANSFER, {}, "Staging Data");
+    xyvk_subpass* transferPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::TRANSFER, {}, "Staging Data 1");
     xyvk_subpass* fragmentPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::FRAGMENT, { &vertexShader, &fragmentShader }, "Render Scene", { transferPass });
-    xyvk_subpass* swapchainPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::PRESENT, { &vertexShader, &textureShader }, "Screen Output", { fragmentPass }, 0, xyvk_dynamicstate(VK_FALSE, VK_FALSE));
-    
-    xyvk_image targetImage(vkdevice, XYVK_IMAGETYPE::ATTACHEMENT, window.hwndWidth, window.hwndHeight);
-    fragmentPass->SetTargetImage(&targetImage);
-    renderGraph.ResizeImageWithSwapchain(&targetImage);
+    xyvk_subpass* transferPass2 = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::TRANSFER, {}, "Staging Data 2", { fragmentPass });
+    xyvk_subpass* swapchainPass = renderGraph.CreateSubpass(cmdpool, XYVK_SUBPASSTYPE::PRESENT, { &vertexShader, &textureShader }, "Screen Output", { transferPass2 }, 0, xyvk_dynamicstate(VK_FALSE, VK_FALSE));
 
     qoi_desc sourceImageDesc;
     void* sourceImageData = qoi_read(DEFAULT_QOI_IMAGE, &sourceImageDesc, 4);
     xyvk_image sourceImage(vkdevice, XYVK_IMAGETYPE::ATTACHEMENT, sourceImageDesc.width, sourceImageDesc.height);
     
+    xyvk_image targetImage(vkdevice, XYVK_IMAGETYPE::ATTACHEMENT, sourceImageDesc.width, sourceImageDesc.height);
+    fragmentPass->SetTargetImage(&targetImage);
+    //renderGraph.ResizeImageWithSwapchain(&targetImage);
+
     xyvk_vertexquad imageQuad(vec2(sourceImageDesc.width, sourceImageDesc.height), 1.0, glm::vec2(0.0, 0.0));
     xyvk_vertexquad screenQuad(vec2(window.hwndWidth, window.hwndHeight), 1.0, glm::vec2(0.0, 0.0));
     imageQuad.VerticesColor(vec4(1.0, 0.0, 1.0, 1.0));
@@ -43,10 +44,9 @@ int XYVK_WINDOWMAIN {
     xyvk_buffer stagingBuffer(vkdevice, XYVK_BUFFERTYPE::STAGING, sizeofQuads + sizeof(glm::mat4) + sizeOfImage);
     xyvk_buffer cameraBuffer(vkdevice, XYVK_BUFFERTYPE::UNIFORM, sizeof(glm::mat4));
 
-    glm::mat4 camera = xyvk_vertexmath::Project2D(window.hwndWidth, window.hwndHeight, 0.0, 0.0, 1.0, 0.0);
+    glm::mat4 camera = xyvk_vertexmath::Project2D(window.hwndWidth, window.hwndHeight, 0.0, 0.0);
     transferPass->renderEvent.hook(xyvk_renderevent([&](xyvk_subpass& renderPass, xyvk_renderobject& renderer, bool frameResized) {
-        camera = xyvk_vertexmath::Project2D(window.hwndWidth, window.hwndHeight, 0.0, 0.0, 1.0, 0.0);
-        screenQuad.Resize(vec2(window.hwndWidth, window.hwndHeight));
+        camera = xyvk_vertexmath::Project2D(sourceImageDesc.width, sourceImageDesc.height, 0.0, 0.0);
         std::vector<xyvk_vertex> quads = xyvk_vertexquad::GetVertexVector({ imageQuad.Vertices(), screenQuad.Vertices() });
         VkDeviceSize byteSize = sourceImageDesc.width * sourceImageDesc.height * sourceImageDesc.channels;
 
@@ -59,12 +59,22 @@ int XYVK_WINDOWMAIN {
         renderer.PushBuffer(cameraBuffer);
         renderer.BindAndDraw(vertexBuffer, 6, 1, 0, 0);
     }));
+
+    transferPass2->renderEvent.hook(xyvk_renderevent([&](xyvk_subpass& renderPass, xyvk_renderobject& renderer, bool frameResized) {
+        camera = xyvk_vertexmath::Project2D(window.hwndWidth, window.hwndHeight, 0.0, 0.0);
+        std::vector<xyvk_vertex> quads = xyvk_vertexquad::GetVertexVector({ imageQuad.Vertices(), screenQuad.Vertices() });
+        VkDeviceSize byteSize = sourceImageDesc.width * sourceImageDesc.height * sourceImageDesc.channels;
+        
+        renderer.StageBufferToBuffer(stagingBuffer, vertexBuffer, quads.data(), sizeofQuads);
+        renderer.StageBufferToBuffer(stagingBuffer, cameraBuffer, &camera, sizeof(glm::mat4));
+        renderer.StageBufferToImage(stagingBuffer, sourceImage, sourceImageData, { .extent = { sourceImageDesc.width, sourceImageDesc.height}, .offset = {0, 0} }, byteSize);
+    }));
     
     swapchainPass->renderEvent.hook(xyvk_renderevent([&](xyvk_subpass& renderPass, xyvk_renderobject& renderer, bool frameResized) {
         renderer.PushBuffer(cameraBuffer);
         renderer.PushImage(sourceImage);
         renderer.PushImage(*renderPass.dependencies[0]->targetImage);
-        renderer.BindAndDraw(vertexBuffer, 6, 1, 6, 0);
+        renderer.BindAndDraw(vertexBuffer, 6, 1, 0, 0);
     }));
     
     std::thread mythread([&]() {

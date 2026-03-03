@@ -8,5 +8,5 @@ layout(binding = 1) uniform sampler2D sampleTexture1;
 layout(binding = 2) uniform sampler2D sampleTexture2;
 
 void main() {
-    outColor = texture(sampleTexture1, fragCoord) * texture(sampleTexture2, fragCoord);
+    outColor = texture(sampleTexture1, fragCoord) * texture(sampleTexture2, fragCoord) * fragColor;
 }
