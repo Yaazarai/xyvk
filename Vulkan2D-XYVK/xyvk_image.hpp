@@ -19,6 +19,8 @@
             bool lerpFilter;
             VkFormat rgbaFormat;
 			VkImageAspectFlags aspectFlags;
+			VkAccessFlags accessMask = VK_ACCESS_NONE;
+			VkPipelineStageFlags accessStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 			VkSamplerAddressMode addressMode;
 			VkResult initialized = VK_ERROR_INITIALIZATION_FAILED;
 			
@@ -97,67 +99,29 @@
 				return vkCreateImageView(vkdevice.logicalDevice, &createInfo, VK_NULL_HANDLE, &imageView);
 			}
 			
-			void GetPipelineBarrierStages(XYVK_IMAGELAYOUT layout, XYVK_CMDBUFFERSTAGE cmdBufferStage, VkPipelineStageFlags& srcStage, VkPipelineStageFlags& dstStage, VkAccessFlags& srcAccessMask, VkAccessFlags& dstAccessMask) {
-				if (cmdBufferStage == XYVK_CMDBUFFERSTAGE::PIPE_TOP) {
-					switch (layout) {
-						case XYVK_IMAGELAYOUT::COLOR_ATTACHMENT:
-						case XYVK_IMAGELAYOUT::PRESENT_SRCKHR:
-						case XYVK_IMAGELAYOUT::UNINITIALIZED:
-							dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-							dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::TRANSFER_SRC:
-							dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-							dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::TRANSFER_DST:
-							dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-							dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::SHADER_READONLY:
-							dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-							dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-						break;
-					}
-
-					srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-					srcAccessMask = VK_ACCESS_NONE;
-				}
-				
-				if (cmdBufferStage == XYVK_CMDBUFFERSTAGE::PIPE_BOT) {
-					switch (layout) {
-						case XYVK_IMAGELAYOUT::COLOR_ATTACHMENT:
-						case XYVK_IMAGELAYOUT::PRESENT_SRCKHR:
-						case XYVK_IMAGELAYOUT::UNINITIALIZED:
-							srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-							srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::TRANSFER_SRC:
-							srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-							srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::TRANSFER_DST:
-							srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-							srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-						break;
-						case XYVK_IMAGELAYOUT::SHADER_READONLY:
-							srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-							srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-						break;
-					}
-
-					dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-					dstAccessMask = VK_ACCESS_NONE;
-				}
-				
-				if (cmdBufferStage == XYVK_CMDBUFFERSTAGE::PIPE_ALL) {
-					srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-					dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-					srcAccessMask = VK_ACCESS_NONE;
-					dstAccessMask = VK_ACCESS_NONE;
+			void GetPipelineBarrierStages(XYVK_IMAGELAYOUT layout, XYVK_CMDBUFFERSTAGE cmdBufferStage, VkPipelineStageFlags& nextStage, VkAccessFlags& nextAccessMask) {
+				switch (layout) {
+					case XYVK_IMAGELAYOUT::COLOR_ATTACHMENT:
+					case XYVK_IMAGELAYOUT::PRESENT_SRCKHR:
+					case XYVK_IMAGELAYOUT::UNINITIALIZED:
+						nextStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+						nextAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+					break;
+					case XYVK_IMAGELAYOUT::TRANSFER_SRC:
+						nextStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+						nextAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+					break;
+					case XYVK_IMAGELAYOUT::TRANSFER_DST:
+						nextStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+						nextAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+					break;
+					case XYVK_IMAGELAYOUT::SHADER_READONLY:
+						nextStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+						nextAccessMask = VK_ACCESS_SHADER_READ_BIT;
+					break;
 				}
 			}
-
+			
 			VkImageMemoryBarrier GetPipelineBarrier(XYVK_IMAGELAYOUT newLayout, XYVK_CMDBUFFERSTAGE cmdBufferStage, VkPipelineStageFlags& srcStage, VkPipelineStageFlags& dstStage) {
 				VkImageMemoryBarrier pipelineBarrier = {
 					.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -167,9 +131,10 @@
 					.image = imageSource,
 				};
 
-				VkAccessFlags srcAccessMask, dstAccessMask;
-				GetPipelineBarrierStages(newLayout, cmdBufferStage, srcStage, dstStage, srcAccessMask, dstAccessMask);
-				pipelineBarrier.srcAccessMask = srcAccessMask;
+				VkAccessFlags dstAccessMask;
+				srcStage = accessStage;
+				GetPipelineBarrierStages(newLayout, cmdBufferStage, dstStage, dstAccessMask);
+				pipelineBarrier.srcAccessMask = accessMask;
 				pipelineBarrier.dstAccessMask = dstAccessMask;
 				return pipelineBarrier;
 			}
@@ -177,9 +142,11 @@
 			void TransitionLayoutBarrier(VkCommandBuffer cmdBuffer, XYVK_CMDBUFFERSTAGE cmdBufferStage, XYVK_IMAGELAYOUT newLayout) {
 				VkPipelineStageFlags srcStage, dstStage;
 				VkImageMemoryBarrier pipelineBarrier = GetPipelineBarrier(newLayout, cmdBufferStage, srcStage, dstStage);
-				imageLayout = newLayout;
-				aspectFlags = pipelineBarrier.subresourceRange.aspectMask;
+				
 				vkCmdPipelineBarrier(cmdBuffer, srcStage, dstStage, 0, 0, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 1, &pipelineBarrier);
+				imageLayout = newLayout;
+				accessMask = pipelineBarrier.dstAccessMask;
+				accessStage = dstStage;
 			}
 			
 			VkDescriptorImageInfo GetDescriptorInfo() {

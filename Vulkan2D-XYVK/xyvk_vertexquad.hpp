@@ -17,7 +17,6 @@
                 // with Vulkan due to Vulkan's inverted Y-Axis without having to transpose the matrix.
                 glm::mat4 projection = glm::ortho(0.0, width, 0.0, height, znear, zfar);
                 return glm::translate(projection, glm::vec3(camerax, cameray, 0.0));
-
             }
             
             const static glm::vec2 GetUVCoords(glm::vec2 xy, glm::vec2 wh, bool forceClamp = true) {

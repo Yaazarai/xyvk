@@ -57,10 +57,16 @@
             : pipelineLayout(pipelineLayout), executionBuffer(commandBuffer), bindingIndex(0), stagingOffset(0) {}
 
 			void StageBufferToBuffer(xyvk_buffer& stageBuffer, xyvk_buffer& destBuffer, void* sourceData, VkDeviceSize byteSize) {
+				stageBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP);
+				destBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP);
+				
 				void* stagedOffset = static_cast<int8_t*>(stageBuffer.description.pMappedData) + stagingOffset;
 				memcpy(stagedOffset, sourceData, (size_t) byteSize);
 				VkBufferCopy copyRegion { .srcOffset = stagingOffset, .dstOffset = 0, .size = byteSize };
 				vkCmdCopyBuffer(executionBuffer.first, stageBuffer.buffer, destBuffer.buffer, 1, &copyRegion);
+				
+				destBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_BOT);
+				stageBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_BOT);
 				stagingOffset += byteSize;
 			}
 
@@ -68,18 +74,21 @@
 				void* stagedOffset = static_cast<int8_t*>(stageBuffer.description.pMappedData) + stagingOffset;
 				memcpy(stagedOffset, sourceData, (size_t)byteSize);
 				
+				stageBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP);
 				destImage.TransitionLayoutBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP, XYVK_IMAGELAYOUT::TRANSFER_DST);
+				
 				VkBufferImageCopy region = {
 					.imageSubresource.aspectMask = destImage.aspectFlags, .bufferOffset = 0, .bufferRowLength = 0, .bufferImageHeight = 0,
 					.imageSubresource.mipLevel = 0, .imageSubresource.baseArrayLayer = 0, .imageSubresource.layerCount = 1,
 					.imageExtent = { static_cast<uint32_t>((rect.extent.width == 0)?destImage.width:rect.extent.width),
 							static_cast<uint32_t>((rect.extent.height == 0)?destImage.height:rect.extent.height), 1 },
-					.imageOffset = { static_cast<int32_t>(rect.offset.x), static_cast<int32_t>(rect.offset.y), 0 },
+					.imageOffset = { rect.offset.x, rect.offset.y, 0 },
 					.bufferOffset = stagingOffset,
 				};
-
 				vkCmdCopyBufferToImage(executionBuffer.first, stageBuffer.buffer, destImage.imageSource, (VkImageLayout) destImage.imageLayout, 1, &region);
+				
 				destImage.TransitionLayoutBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_BOT, XYVK_IMAGELAYOUT::SHADER_READONLY);
+				stageBuffer.TransitionBarrier(executionBuffer.first, XYVK_CMDBUFFERSTAGE::PIPE_BOT);
 				stagingOffset += byteSize;
 			}
 
@@ -128,7 +137,6 @@
 		class xyvk_subpass : public xyvk_disposable {
 		public:
             xyvk_device& vkdevice;
-            xyvk_cmdpool& cmdpool;
             
 			std::vector<xyvk_shader*> shaderStages;
             std::vector<VkShaderEXT> shaderPasses;
@@ -136,7 +144,8 @@
             VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
             xyvk_invoker<xyvk_subpass&, xyvk_renderobject&, bool> renderEvent;
             std::vector<xyvk_subpass*> dependencies;
-
+			
+			xyvk_cmdpool* targetCmdPool = VK_NULL_HANDLE;
 			xyvk_image* targetImage = VK_NULL_HANDLE;
             VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 			VkQueue submitQueue = VK_NULL_HANDLE;
@@ -146,12 +155,12 @@
             const std::string title;
 			const VkDeviceSize subpassIndex;
 			const VkDeviceSize localSubpassIndex;
-
-            VkDeviceSize timelineWait;
+			
+            VkDeviceSize timelineWait = 0;
             uint32_t maxTimestamps, timestampIterator;
             VkQueryPool timestampQueryPool = VK_NULL_HANDLE;
             VkResult initialized = VK_ERROR_INITIALIZATION_FAILED;
-
+			
 			xyvk_subpass operator=(const xyvk_subpass&) = delete;
 			xyvk_subpass(const xyvk_subpass&) = delete;
 			~xyvk_subpass() { this->Dispose(); }
@@ -167,8 +176,8 @@
 				if (descriptorLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(vkdevice.logicalDevice, descriptorLayout, VK_NULL_HANDLE);
 			}
 			
-			xyvk_subpass(xyvk_device& vkdevice, xyvk_cmdpool& cmdpool, XYVK_SUBPASSTYPE subpassType, std::vector<xyvk_shader*> shaderStages, std::string title, VkDeviceSize subpassIndex, VkDeviceSize localSubpassIndex, xyvk_dynamicstate dynamicState = xyvk_dynamicstate())
-            : vkdevice(vkdevice), cmdpool(cmdpool), subpassType(subpassType), shaderStages(shaderStages), title(title), subpassIndex(subpassIndex), localSubpassIndex(localSubpassIndex), dynamicState(dynamicState), maxTimestamps(8U) {
+			xyvk_subpass(xyvk_device& vkdevice, XYVK_SUBPASSTYPE subpassType, std::vector<xyvk_shader*> shaderStages, std::string title, VkDeviceSize subpassIndex, VkDeviceSize localSubpassIndex, xyvk_dynamicstate dynamicState = xyvk_dynamicstate())
+            : vkdevice(vkdevice), subpassType(subpassType), shaderStages(shaderStages), title(title), subpassIndex(subpassIndex), localSubpassIndex(localSubpassIndex), dynamicState(dynamicState), maxTimestamps(8U) {
                 onDispose.hook(xyvk_callback<bool>([this](bool forceDispose) {this->Disposable(forceDispose); }));
 				
 				std::sort(this->shaderStages.begin(), this->shaderStages.end(),
@@ -191,13 +200,13 @@
 				#if XYVK_VALIDATION
 					switch(subpassType) {
 						case XYVK_SUBPASSTYPE::FRAGMENT:
-						std::cout << "xyvk-engine: Created graphics pass [" << title << "]" << std::endl;
+						std::cout << "xyvk-engine: [" << subpassIndex << "] Created graphics pass [" << title << "]" << std::endl;
 						break;
 						case XYVK_SUBPASSTYPE::PRESENT:
-						std::cout << "xyvk-engine: Created present pass [" << title << "]" << std::endl;
+						std::cout << "xyvk-engine: [" << subpassIndex <<  "] Created present pass [" << title << "]" << std::endl;
 						break;
 						case XYVK_SUBPASSTYPE::TRANSFER:
-						std::cout << "xyvk-engine: Created transfer only pass [" << title << "]" << std::endl;
+						std::cout << "xyvk-engine: [" << subpassIndex << "] Created transfer only pass [" << title << "]" << std::endl;
 						break;
 					}
 				#endif
@@ -223,7 +232,11 @@
 				this->targetImage = targetImage;
 			}
 
-            std::vector<float> QueryTimeStamps() {
+            void SetTargetCmdPool(xyvk_cmdpool* targetCmdPool) {
+				this->targetCmdPool = targetCmdPool;
+			}
+			
+			std::vector<float> QueryTimeStamps() {
 				std::vector<float> frametimes;
 				#if XYVK_VALIDATION
 					if (timestampIterator > 0) {
@@ -249,10 +262,10 @@
 			}
 			
 			std::pair<VkCommandBuffer,int32_t> BeginCmdBuffer() {
-				std::pair<VkCommandBuffer, int32_t> bufferIndexPair = cmdpool.Lease(false);
+				std::pair<VkCommandBuffer, int32_t> bufferIndexPair = targetCmdPool->Lease(false);
 				VkCommandBufferBeginInfo beginInfo { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT };
 				VkResult result = vkBeginCommandBuffer(bufferIndexPair.first, &beginInfo);
-
+				
 				if (result == VK_SUCCESS) {
 					#if XYVK_VALIDATION
 						vkCmdResetQueryPool(bufferIndexPair.first, timestampQueryPool, timestampIterator, 2);
@@ -262,9 +275,10 @@
 					
 					if (subpassType == XYVK_SUBPASSTYPE::FRAGMENT || subpassType == XYVK_SUBPASSTYPE::PRESENT) {
 						targetImage->TransitionLayoutBarrier(bufferIndexPair.first, XYVK_CMDBUFFERSTAGE::PIPE_TOP, XYVK_IMAGELAYOUT::COLOR_ATTACHMENT);
-
+						
 						VkViewport dynamicViewportKHR { .x = 0, .y = 0, .minDepth = 0.0f, .maxDepth = 1.0f, .width = static_cast<float>(targetImage->width), .height = static_cast<float>(targetImage->height) };
 						VkRect2D renderAreaKHR = { .offset = { .x = 0, .y = 0 } , .extent = { .width = static_cast<uint32_t>(targetImage->width), .height = static_cast<uint32_t>(targetImage->height) } };
+						
 						VkRenderingAttachmentInfoKHR colorAttachmentInfo { .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
 							.clearValue = dynamicState.clearColor, .loadOp = ((dynamicState.clearOnLoad)?VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE), .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 							.imageView = targetImage->imageView, .imageLayout = (VkImageLayout) targetImage->imageLayout
@@ -278,7 +292,7 @@
 						VkBool32 colorWrites = VK_TRUE;
 						VkBool32 defaultBoolFlag = VK_FALSE;
 						VkSampleMask sampleMasks = VK_SAMPLE_COUNT_1_BIT;
-
+						
 						vkCmdBeginRenderingKHRXYVK(bufferIndexPair.first, &dynamicRenderInfo);
 						vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
 						vkCmdSetViewportWithCountEXTXYVK(bufferIndexPair.first, 1, &dynamicViewportKHR);
@@ -305,7 +319,7 @@
 					} else if (subpassType == XYVK_SUBPASSTYPE::COMPUTE) {
 						vkCmdBindShadersEXTXYVK(bufferIndexPair.first, shaderStages.size(), shaderStageBits.data(), shaderPasses.data());
 					}
-				} else { cmdpool.Return(bufferIndexPair); }
+				} else { targetCmdPool->Return(bufferIndexPair); }
 				return bufferIndexPair;
 			}
 

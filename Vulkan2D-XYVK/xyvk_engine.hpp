@@ -123,5 +123,6 @@
         #include "./xyvk_subpass.hpp"
         #include "./xyvk_vertexquad.hpp"
         #include "./xyvk_graph.hpp"
+        #include "./xyvk_frame.hpp"
     #pragma endregion
 #endif
